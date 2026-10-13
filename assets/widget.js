@@ -87,6 +87,55 @@
     l.at = new Date().toISOString(); l.biz = BIZ.name;
     leads.push(l);
     try { localStorage.setItem(LEAD_KEY, JSON.stringify(leads)); } catch (e) {}
+    renderInbox(); /* keep the prospect-visible inbox panel live */
+  }
+
+  /* ---------- captured-leads inbox preview (prospect-visible panel) ----------
+     The after-hours card promises "Saved to your dashboard" — this panel makes
+     that claim visible on the page. Reads localStorage only, everything escaped. */
+  var inboxEls = null;
+  function inboxDom() {
+    if (!inboxEls) {
+      var panel = document.getElementById('inbox-panel');
+      var list = document.getElementById('inbox-list');
+      var toggle = document.getElementById('inbox-toggle');
+      var count = document.getElementById('inbox-count');
+      if (!panel || !list || !toggle) return null;
+      inboxEls = { panel: panel, list: list, toggle: toggle, count: count };
+    }
+    return inboxEls;
+  }
+  function fmtLeadTime(iso) {
+    try {
+      var d = new Date(iso);
+      if (isNaN(d.getTime())) return iso || '';
+      return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+    } catch (e) { return iso || ''; }
+  }
+  function renderInbox() {
+    var dom = inboxDom();
+    if (!dom) return;
+    if (dom.count) dom.count.textContent = String(leads.length);
+    if (!leads.length) {
+      dom.list.innerHTML = '<div class="inbox-empty"><b>No leads yet</b> &mdash; try the &#127769; 11:42 PM after-hours flow in the chat &mdash; the captured lead will appear right here.</div>';
+      return;
+    }
+    dom.list.innerHTML = leads.slice().reverse().map(function (l) {
+      var when = l.at
+        ? '<time datetime="' + escapeHtml(l.at) + '">' + escapeHtml(fmtLeadTime(l.at)) + '</time>'
+        : '&mdash;';
+      var detail = (l.details && l.details !== '—' && l.details !== '-')
+        ? '<div class="lead-detail">&ldquo;' + escapeHtml(l.details) + '&rdquo;</div>'
+        : '';
+      return '<div class="lead-row">' +
+        '<span class="lead-name">' + escapeHtml(l.name || '—') + '</span>' +
+        '<span class="lead-tag">' + escapeHtml(l.topic || 'Lead') + '</span>' +
+        '<span class="lead-phone">' + escapeHtml(l.phone || '—') + '</span>' +
+        '<span class="lead-src">' + escapeHtml(l.source || '') + '</span>' +
+        '<div class="lead-when">Captured ' + when + '</div>' +
+        detail +
+        '</div>';
+    }).join('');
   }
 
   /* ---------- dom ---------- */
@@ -424,7 +473,7 @@
     }
     if (S.step === 2) {
       S.ah.concern = (t === 'skip') ? 'General inquiry' : t;
-      saveLead({ name: S.ah.name, phone: S.ah.phone, concern: S.ah.concern, source: 'after-hours 11:42 PM' });
+      saveLead({ name: S.ah.name, phone: S.ah.phone, concern: S.ah.concern, topic: S.ah.concern, details: '—', source: 'after-hours 11:42 PM' });
       S.mode = 'idle'; S.step = 0;
       return sayMany([
         { html: '<b>&#9989; Saved!</b> The morning team will reach out <b>first thing</b> &mdash; consultation slots go fast, and now you&rsquo;re first in line. No need to wonder till 9 AM if anyone saw your message.' },
@@ -562,6 +611,18 @@
       });
     });
 
+    /* captured-leads inbox toggle (prospect-visible "Saved to your dashboard") */
+    var idom = inboxDom();
+    if (idom) {
+      renderInbox();
+      idom.toggle.addEventListener('click', function () {
+        var isHidden = idom.panel.hasAttribute('hidden');
+        if (isHidden) { idom.panel.removeAttribute('hidden'); renderInbox(); }
+        else { idom.panel.setAttribute('hidden', ''); }
+        idom.toggle.setAttribute('aria-expanded', isHidden ? 'true' : 'false');
+      });
+    }
+
     /* proactive nudge — once, ~8s in */
     setTimeout(function () {
       if (!opened && !autoOpened) {
@@ -580,11 +641,13 @@
       send: function (t) { openPanel(); return userSays(t); },
       open: openPanel, close: closePanel,
       pickStars: pickStars,
+      saveLead: saveLead,
+      renderInbox: renderInbox,
       getLeads: function () { return leads; },
-      clearLeads: function () { leads = []; try { localStorage.removeItem(LEAD_KEY); } catch (e) {} }
+      clearLeads: function () { leads = []; try { localStorage.removeItem(LEAD_KEY); } catch (e) {} renderInbox(); }
     };
     window.__getLeads = function () { return leads; };
-    window.__clearLeads = function () { leads = []; try { localStorage.removeItem(LEAD_KEY); } catch (e) {} };
+    window.__clearLeads = function () { leads = []; try { localStorage.removeItem(LEAD_KEY); } catch (e) {} renderInbox(); };
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

@@ -102,6 +102,18 @@
         <p style="color:var(--muted);font-size:14px">Licensed medical director &middot; Free parking &middot; Evening appointments &middot; All skin tones welcome</p>
       </div>
     </div>
+    <div class="inbox-card">
+      <h3>&#128203; Captured leads</h3>
+      <p>Curious what &ldquo;Saved to your dashboard&rdquo; actually looks like? This inbox preview shows every lead <span data-biz="host">Ava</span> captures &mdash; stored in your browser&rsquo;s local storage only. Nothing here ever leaves this page.</p>
+      <button id="inbox-toggle" class="btn btn-rose btn-sm" aria-expanded="false" aria-controls="inbox-panel">&#128203; View inbox <span id="inbox-count" class="inbox-count">0</span></button>
+    </div>
+    <div id="inbox-panel" class="inbox-panel" hidden>
+      <div class="inbox-head">
+        <b>&#128203; Captured leads inbox</b>
+        <span class="inbox-local">Browser-local preview &mdash; leads never leave this browser</span>
+      </div>
+      <div id="inbox-list" class="inbox-list"></div>
+    </div>
   </div>
 </section>
 
@@ -129,7 +141,7 @@
 <!-- ============ AVA CHAT WIDGET ============ -->
 <button id="maya-bubble" aria-label="Chat with us">&#128172;<span id="maya-unread" class="hidden">1</span></button>
 
-<div id="maya-panel" role="dialog" aria-label="Chat with Glow Haus Med Spa">
+<div id="maya-panel" role="dialog" aria-label="Chat">
   <div class="maya-head">
     <div class="maya-avatar" data-biz="host-initial">A</div>
     <div class="who">
