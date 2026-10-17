@@ -77,6 +77,10 @@ section.block{padding:72px 0}
 .addr-card h3{color:var(--plum-dark); margin-bottom:8px}
 .addr-card p{margin:.3em 0; font-size:15px}
 .addr-card a{color:var(--accent-dark); font-weight:600}
+.call-cta{margin-top:16px; background:var(--accent); color:#fff; box-shadow:0 8px 20px rgba(183,110,121,.35)}
+.call-cta:hover{transform:translateY(-2px); background:var(--accent-dark); color:#fff}
+.call-link{font-weight:700; color:var(--plum-dark); text-decoration:none; border-bottom:2px solid var(--accent)}
+.call-link:hover{border-color:var(--plum-dark)}
 
 /* footer */
 footer{padding:34px 0 90px; text-align:center; color:var(--muted); font-size:13.5px}
