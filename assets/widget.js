@@ -149,10 +149,11 @@
 
   /* conversation state */
   var S = {
-    mode: 'idle',          // idle | booking | afterhours | review
+    mode: 'idle',          // idle | booking | afterhours | review | quiz
     step: 0,
     booking: {},
     ah: {},
+    quiz: {},
     lastTopic: null
   };
 
@@ -368,7 +369,8 @@
       { label: '&#10024; Our treatments' },
       { label: '&#128197; Book a consultation' },
       { label: '&#127769; After-hours demo' },
-      { label: '&#11088; Rate your visit' }
+      { label: '&#11088; Rate your visit' },
+      { label: '&#129522; 60-sec glow quiz', value: 'quiz' }
     ];
   }
 
@@ -543,17 +545,107 @@
       [{ label: '&#128197; Book a consultation' }, { label: 'No thanks', value: 'no thanks' }]);
   }
 
+  /* ---------- 60-sec glow quiz (lead-capture pilot, fleet pattern 2026-10-21) ----------
+     HONESTY (hard rule): Ava NEVER invents treatment results, prices, before/afters,
+     or availability — the quiz promises a personalized treatment-plan recommendation
+     for the visitor's concern, never fabricated specifics. */
+  var QUIZ_CONCERNS = ['Fine lines & wrinkles', 'Dark spots', 'Acne & breakouts', 'Dull, tired skin', 'Unwanted hair'];
+  var QUIZ_TREATMENTS = ['Botox', 'Fillers', 'Laser', 'Facials', 'Not sure yet'];
+  var QUIZ_TIMELINES = ['ASAP', 'This month', 'In 1–3 months', 'Just exploring'];
+
+  function canonChoice(t, options) {
+    var tl = t.toLowerCase();
+    for (var i = 0; i < options.length; i++) {
+      if (tl === options[i].toLowerCase()) return options[i];
+    }
+    return t.trim().slice(0, 60); /* free text accepted, length-capped */
+  }
+
+  function startQuiz() {
+    S.mode = 'quiz'; S.step = 0; S.quiz = {};
+    return say('<b>&#129522; The 60-second glow quiz!</b><br><br>' +
+      'Three quick questions and I&rsquo;ll build your <b>glow profile</b> &mdash; then I&rsquo;ll put together a <b>personalized treatment-plan recommendation</b> for your skin concern. No spam, no guesswork.<br><br>' +
+      '<b>First: what&rsquo;s your top skin concern?</b>',
+      QUIZ_CONCERNS.map(function (c) { return { label: c }; }));
+  }
+
+  function quizStep(text) {
+    var t = text.trim();
+    if (S.step === 0) {
+      S.quiz.concern = canonChoice(t, QUIZ_CONCERNS); S.step = 1;
+      return say('Got it &mdash; <b>' + escapeHtml(S.quiz.concern) + '</b>. &#129522;<br><br><b>Which treatment</b> are you most curious about?',
+        QUIZ_TREATMENTS.map(function (x) { return { label: x }; }));
+    }
+    if (S.step === 1) {
+      S.quiz.treatment = canonChoice(t, QUIZ_TREATMENTS); S.step = 2;
+      return say('Noted &mdash; <b>' + escapeHtml(S.quiz.treatment) + '</b> it is. &#129522;<br><br><b>When</b> are you thinking of starting?',
+        QUIZ_TIMELINES.map(function (x) { return { label: x }; }));
+    }
+    if (S.step === 2) {
+      S.quiz.timeline = canonChoice(t, QUIZ_TIMELINES); S.step = 3;
+      return say('Love it. &#129522;<br><br><b>What&rsquo;s your name</b> for the glow profile?');
+    }
+    if (S.step === 3) {
+      if (t.length < 2 || t.length > 40) {
+        return say('And your <b>name</b> for the glow profile?');
+      }
+      S.quiz.name = t; S.step = 4;
+      return say('Thanks, ' + escapeHtml(cap(t.split(' ')[0])) + '! And the best <b>number</b> to send your treatment-plan recommendation to?');
+    }
+    if (S.step === 4) {
+      var digits = t.replace(/\D/g, '');
+      if (digits.length < 7) {
+        return say('Hmm, that doesn\'t look like a complete number &mdash; mind double-checking it? <i>(digits only is fine)</i>');
+      }
+      S.quiz.phone = t;
+      return finishQuiz();
+    }
+  }
+
+  function finishQuiz() {
+    var q = S.quiz;
+    saveLead({
+      name: q.name,
+      phone: q.phone,
+      topic: 'Glow quiz — qualified lead',
+      details: 'Concern ' + q.concern + ' · Treatment ' + q.treatment + ' · Timeline ' + q.timeline,
+      source: 'glow quiz'
+    });
+    S.mode = 'idle'; S.step = 0; S.quiz = {};
+    return sayMany([
+      { html: '<b>&#9989; Quiz complete!</b> &#129522;<br><br>Here&rsquo;s your glow profile:' },
+      {
+        dash: [
+          ['Concern', q.concern],
+          ['Treatment', q.treatment],
+          ['Timeline', q.timeline]
+        ]
+      },
+      {
+        html: 'I&rsquo;ll put together a <b>personalized treatment-plan recommendation</b> for your concern and send it to your number &mdash; built around your skin, not a generic package. ' +
+          'That&rsquo;s the whole point &mdash; <b>every visitor becomes a consultation</b>, not a missed customer. Anything else I can help with?',
+        chips: defaultChips()
+      }
+    ]);
+  }
+
   /* ---------- main router ---------- */
   function route(text) {
     var t = text.toLowerCase().trim();
 
     if (S.mode === 'booking') return bookingStep(text);
     if (S.mode === 'afterhours') return afterHoursStep(text);
+    if (S.mode === 'quiz') return quizStep(text);
     if (S.mode === 'review' && S.step === 1) return reviewStep(text);
 
     if (has(t, 'book', 'appoint', 'schedul')) return startBooking();
     if (has(t, 'after hour', 'after-hour', 'closed', 'late night', 'midnight', '11:42')) return startAfterHours();
     if (has(t, 'review', 'rate', 'stars', 'feedback')) return startReview();
+    /* 60-sec glow quiz: word-start keywords only — verified 2026-10-22 that NO
+       med-spa router keyword starts with 'qui', so the chip value 'quiz' can
+       never be hijacked (the word-start 'buy' prefix bug class caught on
+       real-estate, 2026-10-20, does not apply here). */
+    if (has(t, 'quiz', 'glow quiz', 'skin quiz', 'find my treatment', 'treatment match', 'match quiz')) return startQuiz();
     if (has(t, 'botox', 'dysport', 'wrinkle', 'forehead lines', 'crow')) return say(botoxHtml(), [{ label: '&#128197; Book a consultation' }]);
     if (has(t, 'lip filler', 'lip', 'filler', 'juvederm', 'cheek filler', 'under-eye', 'under eye')) return say(fillerHtml(), [{ label: '&#128197; Book a consultation' }]);
     if (has(t, 'laser', 'hair removal')) return say(laserHtml(), [{ label: '&#128197; Book a consultation' }]);
