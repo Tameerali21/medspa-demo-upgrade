@@ -149,12 +149,13 @@
 
   /* conversation state */
   var S = {
-    mode: 'idle',          // idle | booking | afterhours | review | quiz | prepquiz
+    mode: 'idle',          // idle | booking | afterhours | review | quiz | prepquiz | eventquiz
     step: 0,
     booking: {},
     ah: {},
     quiz: {},
     prepquiz: {},
+    eventquiz: {},
     lastTopic: null
   };
 
@@ -372,7 +373,8 @@
       { label: '&#127769; After-hours demo' },
       { label: '&#11088; Rate your visit' },
       { label: '&#129522; 60-sec glow quiz', value: 'quiz' },
-      { label: '&#128203; 60-sec consult-prep quiz', value: 'prep quiz' }
+      { label: '&#128203; 60-sec consult-prep quiz', value: 'prep quiz' },
+      { label: '🎉 60-sec event-ready quiz', value: 'event quiz' }
     ];
   }
 
@@ -701,6 +703,77 @@
     ]);
   }
 
+  /* ---------- 60-sec event-ready quiz (fleet third-quiz port, 2026-11-03) ----------
+     HONESTY (hard rule): Ava NEVER invents treatment results, prices, before/afters,
+     outcomes, availability, dates held, or guarantees — the quiz promises a
+     personalized event-ready plan built around the visitor's occasion + timeline,
+     and the specialist confirms the actual treatment timing on the free
+     consultation call, never fabricated specifics. */
+  var EVENT_OCCASIONS = ['Wedding', 'Photoshoot', 'Vacation', 'Big night out'];
+  var EVENT_TIMELINES = ['This week', 'This month', 'In 1–3 months', 'Just exploring'];
+
+  function startEventQuiz() {
+    S.mode = 'eventquiz'; S.step = 0; S.eventquiz = {};
+    return say('<b>🎉 The 60-second event-ready quiz!</b><br><br>' +
+      'Two quick questions and I&rsquo;ll build your <b>event-ready profile</b> &mdash; then I&rsquo;ll put together a <b>personalized event-ready plan</b> built around your occasion and timeline. On your <b>free consultation call</b>, the specialist will confirm the actual treatment timing for you. No spam, no guesswork.<br><br>' +
+      '<b>First: what&rsquo;s the occasion?</b>',
+      EVENT_OCCASIONS.map(function (c) { return { label: c }; }));
+  }
+
+  function eventQuizStep(text) {
+    var t = text.trim();
+    if (S.step === 0) {
+      S.eventquiz.occasion = canonChoice(t, EVENT_OCCASIONS); S.step = 1;
+      return say('Got it &mdash; <b>' + escapeHtml(S.eventquiz.occasion) + '</b>. 🎉<br><br><b>When</b> is it happening?',
+        EVENT_TIMELINES.map(function (x) { return { label: x }; }));
+    }
+    if (S.step === 1) {
+      S.eventquiz.timeline = canonChoice(t, EVENT_TIMELINES); S.step = 2;
+      return say('Noted &mdash; <b>' + escapeHtml(S.eventquiz.timeline) + '</b> it is. 🎉<br><br><b>What&rsquo;s your name</b> for the event-ready profile?');
+    }
+    if (S.step === 2) {
+      if (t.length < 2 || t.length > 40) {
+        return say('And your <b>name</b> for the event-ready profile?');
+      }
+      S.eventquiz.name = t; S.step = 3;
+      return say('Thanks, ' + escapeHtml(cap(t.split(' ')[0])) + '! And the best <b>number</b> to send your event-ready plan to?');
+    }
+    if (S.step === 3) {
+      var digits = t.replace(/\D/g, '');
+      if (digits.length < 7) {
+        return say('Hmm, that doesn\'t look like a complete number &mdash; mind double-checking it? <i>(digits only is fine)</i>');
+      }
+      S.eventquiz.phone = t;
+      return finishEventQuiz();
+    }
+  }
+
+  function finishEventQuiz() {
+    var q = S.eventquiz;
+    saveLead({
+      name: q.name,
+      phone: q.phone,
+      topic: 'Event-ready quiz — qualified lead',
+      details: 'Occasion ' + q.occasion + ' · Timeline ' + q.timeline,
+      source: 'event quiz'
+    });
+    S.mode = 'idle'; S.step = 0; S.eventquiz = {};
+    return sayMany([
+      { html: '<b>&#9989; Quiz complete!</b> 🎉<br><br>Here&rsquo;s your event-ready profile:' },
+      {
+        dash: [
+          ['Occasion', q.occasion],
+          ['Timeline', q.timeline]
+        ]
+      },
+      {
+        html: 'I&rsquo;ll put together a <b>personalized event-ready plan</b> built around your occasion and timeline and send it to your number &mdash; and on your <b>free consultation call</b>, the specialist will confirm the actual treatment timing for you. ' +
+          'That&rsquo;s the whole point &mdash; <b>every visitor becomes a consultation</b>, not a missed customer. Anything else I can help with?',
+        chips: defaultChips()
+      }
+    ]);
+  }
+
   /* ---------- main router ---------- */
   function route(text) {
     var t = text.toLowerCase().trim();
@@ -709,6 +782,7 @@
     if (S.mode === 'afterhours') return afterHoursStep(text);
     if (S.mode === 'quiz') return quizStep(text);
     if (S.mode === 'prepquiz') return prepQuizStep(text);
+    if (S.mode === 'eventquiz') return eventQuizStep(text);
     if (S.mode === 'review' && S.step === 1) return reviewStep(text);
 
     if (has(t, 'book', 'appoint', 'schedul')) return startBooking();
@@ -722,6 +796,14 @@
        value 'prep quiz' contains 'quiz', so the glow quiz's word-start 'quiz'
        match would otherwise hijack it into the glow quiz (the real-estate
        'buy'/'buyer' bug class, 2026-10-20). Bare 'prep' alone triggers nothing. */
+    /* 60-sec event-ready quiz: trigger BEFORE both the prep-quiz and glow-quiz
+       triggers — the chip value 'event quiz' contains 'quiz', so the glow
+       quiz's word-start 'quiz' match would otherwise hijack it (the
+       real-estate 'buy'/'buyer' bug class, 2026-10-20). Bare 'event' alone
+       triggers nothing: it matches no 'event quiz' phrase and falls through
+       to the graceful fallback. No existing med-spa router keyword starts
+       with 'event' (audited 2026-11-03). */
+    if (has(t, 'event quiz', 'event-ready quiz', 'event ready quiz')) return startEventQuiz();
     if (has(t, 'prep quiz', 'consult prep quiz', 'consultation prep quiz')) return startPrepQuiz();
     if (has(t, 'quiz', 'glow quiz', 'skin quiz', 'find my treatment', 'treatment match', 'match quiz')) return startQuiz();
     if (has(t, 'botox', 'dysport', 'wrinkle', 'forehead lines', 'crow')) return say(botoxHtml(), [{ label: '&#128197; Book a consultation' }]);
