@@ -149,13 +149,14 @@
 
   /* conversation state */
   var S = {
-    mode: 'idle',          // idle | booking | afterhours | review | quiz | prepquiz | eventquiz
+    mode: 'idle',          // idle | booking | afterhours | review | quiz | prepquiz | eventquiz | memberquiz
     step: 0,
     booking: {},
     ah: {},
     quiz: {},
     prepquiz: {},
     eventquiz: {},
+    memberquiz: {},
     lastTopic: null
   };
 
@@ -374,7 +375,8 @@
       { label: '&#11088; Rate your visit' },
       { label: '&#129522; 60-sec glow quiz', value: 'quiz' },
       { label: '&#128203; 60-sec consult-prep quiz', value: 'prep quiz' },
-      { label: '🎉 60-sec event-ready quiz', value: 'event quiz' }
+      { label: '🎉 60-sec event-ready quiz', value: 'event quiz' },
+      { label: '💎 60-sec membership quiz', value: 'membership quiz' }
     ];
   }
 
@@ -774,6 +776,76 @@
     ]);
   }
 
+  /* ---------- 60-sec membership quiz (fleet fourth-quiz port, 2026-11-08) ----------
+     HONESTY (hard rule): Ava NEVER invents membership prices, discounts, results,
+     before/afters, availability, or guarantees — the quiz promises a personalized
+     membership plan built around the visitor's goal + visit frequency, with an
+     exact written quote AT THE VISIT, never fabricated specifics. */
+  var MEMBERSHIP_GOALS = ['Monthly treatments', 'Botox savings', 'Regular facials', 'Self-care routine'];
+  var MEMBERSHIP_FREQUENCIES = ['Weekly', 'Every 2 weeks', 'Monthly', 'Every few months'];
+
+  function startMembershipQuiz() {
+    S.mode = 'memberquiz'; S.step = 0; S.memberquiz = {};
+    return say('<b>💎 The 60-second membership quiz!</b><br><br>' +
+      'Two quick questions and I&rsquo;ll build your <b>membership profile</b> &mdash; then I&rsquo;ll put together a <b>personalized membership plan</b> built around your goal and how often you visit. At your visit, you&rsquo;ll get the <b>exact written quote</b> &mdash; no guesswork, no pressure.<br><br>' +
+      '<b>First: what&rsquo;s your main membership goal?</b>',
+      MEMBERSHIP_GOALS.map(function (c) { return { label: c }; }));
+  }
+
+  function membershipQuizStep(text) {
+    var t = text.trim();
+    if (S.step === 0) {
+      S.memberquiz.goal = canonChoice(t, MEMBERSHIP_GOALS); S.step = 1;
+      return say('Got it &mdash; <b>' + escapeHtml(S.memberquiz.goal) + '</b>. 💎<br><br><b>How often</b> do you see yourself visiting?',
+        MEMBERSHIP_FREQUENCIES.map(function (x) { return { label: x }; }));
+    }
+    if (S.step === 1) {
+      S.memberquiz.frequency = canonChoice(t, MEMBERSHIP_FREQUENCIES); S.step = 2;
+      return say('Noted &mdash; <b>' + escapeHtml(S.memberquiz.frequency) + '</b> it is. 💎<br><br><b>What&rsquo;s your name</b> for the membership profile?');
+    }
+    if (S.step === 2) {
+      if (t.length < 2 || t.length > 40) {
+        return say('And your <b>name</b> for the membership profile?');
+      }
+      S.memberquiz.name = t; S.step = 3;
+      return say('Thanks, ' + escapeHtml(cap(t.split(' ')[0])) + '! And the best <b>number</b> to send your membership plan to?');
+    }
+    if (S.step === 3) {
+      var digits = t.replace(/\D/g, '');
+      if (digits.length < 7) {
+        return say('Hmm, that doesn\'t look like a complete number &mdash; mind double-checking it? <i>(digits only is fine)</i>');
+      }
+      S.memberquiz.phone = t;
+      return finishMembershipQuiz();
+    }
+  }
+
+  function finishMembershipQuiz() {
+    var q = S.memberquiz;
+    saveLead({
+      name: q.name,
+      phone: q.phone,
+      topic: 'Membership quiz — qualified lead',
+      details: 'Goal ' + q.goal + ' · Frequency ' + q.frequency,
+      source: 'membership quiz'
+    });
+    S.mode = 'idle'; S.step = 0; S.memberquiz = {};
+    return sayMany([
+      { html: '<b>&#9989; Quiz complete!</b> 💎<br><br>Here&rsquo;s your membership profile:' },
+      {
+        dash: [
+          ['Goal', q.goal],
+          ['Frequency', q.frequency]
+        ]
+      },
+      {
+        html: 'I&rsquo;ll put together a <b>personalized membership plan</b> built around your goal and how often you visit and send it to your number &mdash; and <b>at your visit</b>, you&rsquo;ll get the <b>exact written quote</b> before anything is booked. ' +
+          'That&rsquo;s the whole point &mdash; <b>every visitor becomes a consultation</b>, not a missed customer. Anything else I can help with?',
+        chips: defaultChips()
+      }
+    ]);
+  }
+
   /* ---------- main router ---------- */
   function route(text) {
     var t = text.toLowerCase().trim();
@@ -783,6 +855,7 @@
     if (S.mode === 'quiz') return quizStep(text);
     if (S.mode === 'prepquiz') return prepQuizStep(text);
     if (S.mode === 'eventquiz') return eventQuizStep(text);
+    if (S.mode === 'memberquiz') return membershipQuizStep(text);
     if (S.mode === 'review' && S.step === 1) return reviewStep(text);
 
     if (has(t, 'book', 'appoint', 'schedul')) return startBooking();
@@ -803,6 +876,17 @@
        triggers nothing: it matches no 'event quiz' phrase and falls through
        to the graceful fallback. No existing med-spa router keyword starts
        with 'event' (audited 2026-11-03). */
+    /* 60-sec membership quiz: trigger FIRST, before the event-quiz, prep-quiz
+       AND glow-quiz triggers — the chip value 'membership quiz' contains 'quiz',
+       so the glow quiz's word-start 'quiz' match would otherwise hijack it (the
+       real-estate 'buy'/'buyer' bug class, 2026-10-20). ROUTER AUDIT 2026-11-08:
+       the only med-spa keywords starting with 'mem'/'member' are the membership
+       INFO branch ('membership', 'member', 'monthly plan') and the booking
+       reason check ('member') — both sit AFTER the quiz triggers, so bare
+       'membership' / 'member' still reach the $149/mo membership info, never
+       the quiz; bare 'membership quiz' can only land here. No keyword starts
+       with 'member' before the quiz triggers. */
+    if (has(t, 'membership quiz', 'member quiz')) return startMembershipQuiz();
     if (has(t, 'event quiz', 'event-ready quiz', 'event ready quiz')) return startEventQuiz();
     if (has(t, 'prep quiz', 'consult prep quiz', 'consultation prep quiz')) return startPrepQuiz();
     if (has(t, 'quiz', 'glow quiz', 'skin quiz', 'find my treatment', 'treatment match', 'match quiz')) return startQuiz();
