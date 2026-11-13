@@ -149,7 +149,7 @@
 
   /* conversation state */
   var S = {
-    mode: 'idle',          // idle | booking | afterhours | review | quiz | prepquiz | eventquiz | memberquiz
+    mode: 'idle',          // idle | booking | afterhours | review | quiz | prepquiz | eventquiz | memberquiz | budgetquiz
     step: 0,
     booking: {},
     ah: {},
@@ -157,6 +157,7 @@
     prepquiz: {},
     eventquiz: {},
     memberquiz: {},
+    budgetquiz: {},
     lastTopic: null
   };
 
@@ -376,7 +377,8 @@
       { label: '&#129522; 60-sec glow quiz', value: 'quiz' },
       { label: '&#128203; 60-sec consult-prep quiz', value: 'prep quiz' },
       { label: '🎉 60-sec event-ready quiz', value: 'event quiz' },
-      { label: '💎 60-sec membership quiz', value: 'membership quiz' }
+      { label: '💎 60-sec membership quiz', value: 'membership quiz' },
+      { label: '💰 60-sec budget quiz', value: 'budget quiz' }
     ];
   }
 
@@ -846,6 +848,77 @@
     ]);
   }
 
+  /* ---------- 60-sec budget quiz (fleet fifth-quiz port, 2026-11-13) ----------
+     HONESTY (hard rule): Ava NEVER invents prices, discounts, results,
+     before/afters, availability, or guarantees — the quiz promises a personalized
+     plan matched to the visitor's OWN stated budget, with an exact written quote
+     AT THE VISIT, never fabricated specifics. The budget ranges are the visitor's
+     answer choices, not prices quoted by Ava. */
+  var BUDGET_RANGES = ['Under $100', '$100–$250', '$250–$500', '$500+'];
+  var BUDGET_PRIORITIES = ['One signature treatment', 'A little of everything', 'Best value membership', 'Just this visit'];
+
+  function startBudgetQuiz() {
+    S.mode = 'budgetquiz'; S.step = 0; S.budgetquiz = {};
+    return say('<b>💰 The 60-second budget quiz!</b><br><br>' +
+      'Two quick questions and I&rsquo;ll build your <b>budget profile</b> &mdash; then I&rsquo;ll put together a <b>personalized plan matched to your budget</b>. At your visit, you&rsquo;ll get the <b>exact written quote</b> &mdash; no guesswork, no pressure.<br><br>' +
+      '<b>First: what&rsquo;s your budget for this visit?</b>',
+      BUDGET_RANGES.map(function (c) { return { label: c }; }));
+  }
+
+  function budgetQuizStep(text) {
+    var t = text.trim();
+    if (S.step === 0) {
+      S.budgetquiz.budget = canonChoice(t, BUDGET_RANGES); S.step = 1;
+      return say('Got it &mdash; <b>' + escapeHtml(S.budgetquiz.budget) + '</b>. 💰<br><br><b>What matters most</b> for this visit?',
+        BUDGET_PRIORITIES.map(function (x) { return { label: x }; }));
+    }
+    if (S.step === 1) {
+      S.budgetquiz.priority = canonChoice(t, BUDGET_PRIORITIES); S.step = 2;
+      return say('Noted &mdash; <b>' + escapeHtml(S.budgetquiz.priority) + '</b> it is. 💰<br><br><b>What&rsquo;s your name</b> for the budget profile?');
+    }
+    if (S.step === 2) {
+      if (t.length < 2 || t.length > 40) {
+        return say('And your <b>name</b> for the budget profile?');
+      }
+      S.budgetquiz.name = t; S.step = 3;
+      return say('Thanks, ' + escapeHtml(cap(t.split(' ')[0])) + '! And the best <b>number</b> to send your budget plan to?');
+    }
+    if (S.step === 3) {
+      var digits = t.replace(/\D/g, '');
+      if (digits.length < 7) {
+        return say('Hmm, that doesn\'t look like a complete number &mdash; mind double-checking it? <i>(digits only is fine)</i>');
+      }
+      S.budgetquiz.phone = t;
+      return finishBudgetQuiz();
+    }
+  }
+
+  function finishBudgetQuiz() {
+    var q = S.budgetquiz;
+    saveLead({
+      name: q.name,
+      phone: q.phone,
+      topic: 'Budget quiz — qualified lead',
+      details: 'Budget ' + q.budget + ' · Priority ' + q.priority,
+      source: 'budget quiz'
+    });
+    S.mode = 'idle'; S.step = 0; S.budgetquiz = {};
+    return sayMany([
+      { html: '<b>&#9989; Quiz complete!</b> 💰<br><br>Here&rsquo;s your budget profile:' },
+      {
+        dash: [
+          ['Budget', q.budget],
+          ['Priority', q.priority]
+        ]
+      },
+      {
+        html: 'I&rsquo;ll put together a <b>personalized plan matched to your budget</b> and send it to your number &mdash; and <b>at your visit</b>, you&rsquo;ll get the <b>exact written quote</b> before anything is booked. ' +
+          'That&rsquo;s the whole point &mdash; <b>every visitor becomes a consultation</b>, not a missed customer. Anything else I can help with?',
+        chips: defaultChips()
+      }
+    ]);
+  }
+
   /* ---------- main router ---------- */
   function route(text) {
     var t = text.toLowerCase().trim();
@@ -856,6 +929,7 @@
     if (S.mode === 'prepquiz') return prepQuizStep(text);
     if (S.mode === 'eventquiz') return eventQuizStep(text);
     if (S.mode === 'memberquiz') return membershipQuizStep(text);
+    if (S.mode === 'budgetquiz') return budgetQuizStep(text);
     if (S.mode === 'review' && S.step === 1) return reviewStep(text);
 
     if (has(t, 'book', 'appoint', 'schedul')) return startBooking();
@@ -886,6 +960,17 @@
        'membership' / 'member' still reach the $149/mo membership info, never
        the quiz; bare 'membership quiz' can only land here. No keyword starts
        with 'member' before the quiz triggers. */
+    /* 60-sec budget quiz: trigger FIRST, before the membership-quiz, event-quiz,
+       prep-quiz AND glow-quiz triggers — the chip value 'budget quiz' contains
+       'quiz', so the glow quiz's word-start 'quiz' match would otherwise hijack
+       it (the real-estate 'buy'/'buyer' bug class, 2026-10-20). ROUTER AUDIT
+       2026-11-13: NO existing router keyword matches bare 'budget' — the
+       pricing branch keywords ('price', 'cost', 'how much', 'expensive',
+       'cheap', '$$', 'fee') share no substring with 'budget', and no other
+       branch keyword starts with 'budg', so bare 'budget' still falls through
+       to the graceful fallback, exactly as before; only the exact phrase
+       'budget quiz' lands here. */
+    if (has(t, 'budget quiz')) return startBudgetQuiz();
     if (has(t, 'membership quiz', 'member quiz')) return startMembershipQuiz();
     if (has(t, 'event quiz', 'event-ready quiz', 'event ready quiz')) return startEventQuiz();
     if (has(t, 'prep quiz', 'consult prep quiz', 'consultation prep quiz')) return startPrepQuiz();
